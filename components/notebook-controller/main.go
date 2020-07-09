@@ -17,6 +17,7 @@ package main
 
 import (
 	"flag"
+	istionetworkingv1 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	"os"
 
 	nbv1 "github.com/kubeflow/kubeflow/components/notebook-controller/api/v1"
@@ -43,15 +44,20 @@ func init() {
 	_ = nbv1alpha1.AddToScheme(scheme)
 	_ = nbv1beta1.AddToScheme(scheme)
 	_ = nbv1.AddToScheme(scheme)
+	_ = istionetworkingv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
 func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
+	var leaderElectionKey string
+	var watchNamespace string
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	flag.StringVar(&leaderElectionKey, "leader-election-key", "production", "Key for leader election")
+	flag.StringVar(&watchNamespace, "watch-namespace", "", "the namespace controller is watching")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.Logger(true))
@@ -60,6 +66,7 @@ func main() {
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
 		LeaderElection:     enableLeaderElection,
+		Namespace:          watchNamespace,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

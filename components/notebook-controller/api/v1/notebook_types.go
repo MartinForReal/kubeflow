@@ -37,7 +37,7 @@ type NotebookTemplateSpec struct {
 // NotebookStatus defines the observed state of Notebook
 type NotebookStatus struct {
 	// Conditions is an array of current conditions
-	Conditions []NotebookCondition `json:"conditions,omitempty"`
+	Conditions []NotebookCondition `json:"conditions"`
 	// ReadyReplicas is the number of Pods created by the StatefulSet controller that have a Ready Condition.
 	ReadyReplicas int32 `json:"readyReplicas"`
 	// ContainerState is the state of underlying container.
