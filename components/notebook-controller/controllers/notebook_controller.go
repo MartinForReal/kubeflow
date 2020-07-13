@@ -86,6 +86,10 @@ func (r *NotebookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		log.Error(err, "unable to fetch Notebook")
 		return ctrl.Result{}, ignoreNotFound(err)
 	}
+	if !instance.DeletionTimestamp.IsZero() {
+		log.Info("instance is being deleted, ignored")
+		return ctrl.Result{}, nil
+	}
 
 	ss := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
