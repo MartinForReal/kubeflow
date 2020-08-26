@@ -19,6 +19,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"time"
+
+	prometheusopratorapiv1 "github.com/coreos/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/go-logr/logr"
 	gogopb "github.com/gogo/protobuf/types"
 	"github.com/kubeflow/kubeflow/components/notebook-controller/api/v1alpha1"
@@ -35,11 +39,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"time"
 )
 
 const DefaultContainerPort = 8888
@@ -48,6 +50,8 @@ const DefaultServingPort = 80
 // The default fsGroup of PodSecurityContext.
 // https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#podsecuritycontext-v1-core
 const DefaultFSGroup = int64(100)
+const EnvKeyUseIstio = "USE_ISTIO"
+const EnvKeyUsePrometheusOperator = "USE_SVCMON"
 
 /*
 We generally want to ignore (not requeue) NotFound errors, since we'll get a
@@ -125,6 +129,9 @@ func (r *NotebookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      instance.Name,
 			Namespace: instance.Namespace,
+			Labels: map[string]string{
+				"statefulset": instance.Name,
+			},
 		},
 	}
 	_, err = CreateOrUpdate(ctx, r.Client, service, func() error {
@@ -145,7 +152,7 @@ func (r *NotebookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	// Reconcile virtual service if we use ISTIO.
-	if os.Getenv("USE_ISTIO") == "true" {
+	if os.Getenv(EnvKeyUseIstio) == "true" {
 		// Reconcile service
 		virtualService := &istionetworkingv1.VirtualService{
 			ObjectMeta: metav1.ObjectMeta{
@@ -168,6 +175,33 @@ func (r *NotebookReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		})
 		if err != nil {
 			log.Error(err, "Failed to ensure virtualservice")
+		}
+	}
+	if os.Getenv(EnvKeyUsePrometheusOperator) == "true" {
+		svcMonitor := &prometheusopratorapiv1.ServiceMonitor{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      instance.Name,
+				Namespace: instance.Namespace,
+			},
+		}
+		_, err = CreateOrUpdate(ctx, r.Client, svcMonitor, func() error {
+			if service.CreationTimestamp.IsZero() {
+				log.Info("Creating service monitor", "namespace", svcMonitor.Namespace, "name", svcMonitor.Name)
+			} else {
+				log.Info("Updating service monitor", "namespace", svcMonitor.Namespace, "name", svcMonitor.Name)
+			}
+			err = controllerutil.SetControllerReference(instance, svcMonitor, r.Scheme)
+			if err != nil {
+				return err
+			}
+			return generateServiceMonitor(svcMonitor, instance)
+		}, func(origin runtime.Object, new runtime.Object) bool {
+			originSts := origin.(*prometheusopratorapiv1.ServiceMonitor)
+			newSts := new.(*prometheusopratorapiv1.ServiceMonitor)
+			return equality.Semantic.DeepDerivative(originSts.Spec, newSts.Spec)
+		})
+		if err != nil {
+			log.Error(err, "Failed to ensure service monitor")
 		}
 	}
 	instance.Status.ReadyReplicas = ss.Status.ReadyReplicas
@@ -429,6 +463,29 @@ func generateVirtualService(virtualService *istionetworkingv1.VirtualService, in
 		},
 	}
 
+	return nil
+}
+
+func generateServiceMonitor(svcMonitor *prometheusopratorapiv1.ServiceMonitor, instance *v1alpha1.Notebook) error {
+	if svcMonitor == nil || instance == nil {
+		return errors.New("service monitor or instance is nil")
+	}
+	namespace := instance.Namespace
+	name := instance.Name
+	prefix := fmt.Sprintf("/notebook/%s/%s/", namespace, name)
+	svcMonitor.Spec.JobLabel = fmt.Sprintf("notebook-%s-%s", namespace, name)
+
+	containerPorts := instance.Spec.Template.Spec.Containers[0].Ports
+	if len(containerPorts) == 0 {
+		return errors.New("no container port is available")
+	}
+	svcMonitor.Spec.Endpoints = []prometheusopratorapiv1.Endpoint{
+		{
+			Port: containerPorts[0].Name,
+			Path: prefix + "metrics",
+		},
+	}
+	svcMonitor.Spec.Selector = metav1.LabelSelector{MatchLabels: map[string]string{"statefulset": instance.Name}}
 	return nil
 }
 

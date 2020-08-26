@@ -17,6 +17,7 @@ package main
 
 import (
 	"flag"
+	prometheusopratorapiv1 "github.com/coreos/prometheus-operator/pkg/apis/monitoring/v1"
 	istionetworkingv1 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	"os"
 
@@ -45,6 +46,7 @@ func init() {
 	_ = nbv1beta1.AddToScheme(scheme)
 	_ = nbv1.AddToScheme(scheme)
 	_ = istionetworkingv1.AddToScheme(scheme)
+	_ = prometheusopratorapiv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
